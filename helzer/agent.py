@@ -22,6 +22,14 @@ MUTATING_TOOLS = {
     "lock_channel", "unlock_channel", "set_slowmode", "purge_messages",
 }
 
+# Keep the normal conversation path lightweight. Tool schemas are only sent
+# when the request looks like it may actually need a Discord operation.
+TOOL_HINTS = (
+    "lock", "unlock", "channel", "dm", "direct message", "message", "send", "role",
+    "timeout", "kick", "ban", "unban", "purge", "delete", "remove", "add", "create",
+    "rename", "slowmode", "slow mode", "server", "member", "permission", "permissions",
+)
+
 
 class ConfirmationView(discord.ui.View):
     def __init__(self, agent, key: str, title: str):
@@ -65,11 +73,32 @@ class HelzerAgent:
         self.pending: dict[str, dict[str, Any]] = {}
         self._rate_lock = asyncio.Lock()
         self._last_request: dict[int, float] = {}
+        self._tool_specs = tool_specs()
 
     def authorized(self, member: discord.Member) -> bool:
         if member.id in self.settings.owner_ids or member.guild_permissions.administrator:
             return True
         return bool({r.id for r in member.roles} & self.settings.allowed_role_ids)
+
+    @staticmethod
+    def _needs_tools(prompt: str) -> bool:
+        text = prompt.casefold()
+        return any(hint in text for hint in TOOL_HINTS)
+
+    @staticmethod
+    def _normalize_tool_args(message, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        args = dict(args)
+        if name in {"lock_channel", "unlock_channel", "set_slowmode", "purge_messages"}:
+            channel = getattr(message, "channel", None)
+            if channel is not None:
+                # If Gemini omitted the ID or hallucinated an invalid one,
+                # these commands should target the channel where the request
+                # was made rather than failing with "Text channel not found".
+                current_id = getattr(channel, "id", None)
+                supplied = args.get("channel_id")
+                if not supplied or str(supplied) != str(current_id):
+                    args["channel_id"] = current_id
+        return args
 
     async def handle_message(self, message: discord.Message):
         if message.author.bot or not should_respond(message, self.bot):
@@ -94,7 +123,7 @@ class HelzerAgent:
                     getattr(getattr(message, "channel", None), "id", None),
                     prompt,
                 )
-                result = "I hit an internal error while processing that. Check the bot logs for the exact failure."
+                result = "Gemini is temporarily unavailable. Please try again in a moment."
             if isinstance(result, discord.ui.View):
                 await message.reply("This action changes the server or sends a message. Confirm it below.", view=result, mention_author=False)
             else:
@@ -112,11 +141,11 @@ class HelzerAgent:
         requester_id = getattr(user, "id", 0)
         scope = scope_for(message)
         history = await self.memory.recent(scope)
-        contents: list[Any] = [discord_to_gemini_content(role, content) for role, content in history]
+        contents: list[Any] = [discord_to_gemini_content(role, content) for role, content in history[-12:]]
         contents.append(discord_to_gemini_content("user", discord_context(message) + "\nUser request: " + prompt))
         guild = getattr(message, "guild", None)
         system = build_system_prompt(self.settings.timezone, guild.name if guild else None)
-        tools = tool_specs() if guild else []
+        tools = self._tool_specs if guild and self._needs_tools(prompt) else []
 
         for _ in range(self.settings.max_tool_rounds):
             response = await self.gemini.generate(contents, system, tools)
@@ -130,7 +159,7 @@ class HelzerAgent:
             contents.append(response.candidates[0].content)
             for call in calls:
                 name = call.name
-                args = dict(call.args or {})
+                args = self._normalize_tool_args(message, name, dict(call.args or {}))
                 if name in MUTATING_TOOLS:
                     if not guild or not isinstance(user, discord.Member) or not self.authorized(user):
                         contents.append(self.gemini.function_result(name, {"ok": False, "error": "Requester is not authorized for server actions."}))
@@ -141,7 +170,7 @@ class HelzerAgent:
                     details = ", ".join(f"{k}={v}" for k, v in args.items())
                     return ConfirmationView(self, key, f"{name}: {details}")
                 try:
-                    result = await execute(message, name, args)
+                    result = await execute(message, name, args, self.bot)
                 except Exception as exc:
                     result = {"ok": False, "error": str(exc)}
                 contents.append(self.gemini.function_result(name, result))
@@ -150,7 +179,7 @@ class HelzerAgent:
 
     async def execute_pending(self, pending: dict[str, Any]):
         try:
-            return await execute(pending["message"], pending["name"], pending["args"])
+            return await execute(pending["message"], pending["name"], pending["args"], self.bot)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
