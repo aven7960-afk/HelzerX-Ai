@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import time
 from typing import Any
 
 from google import genai
@@ -16,7 +17,7 @@ class GeminiProvider:
 
     def __init__(self, api_key: str, model: str, thinking_level: str = "low"):
         self.model = model
-        self.thinking_level = thinking_level if thinking_level in {"low", "medium", "high"} else "low"
+        self.thinking_level = thinking_level if thinking_level in {"minimal", "low", "medium", "high"} else "low"
         self.client = genai.Client(api_key=api_key)
 
     @staticmethod
@@ -35,8 +36,6 @@ class GeminiProvider:
     async def generate(self, contents: list[Any], system_instruction: str, tools=None):
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            # Gemini 3.8 Flash defaults to medium thinking. Low is much faster
-            # for Discord chat while still retaining reasoning for tool use.
             thinking_config=types.ThinkingConfig(thinking_level=self.thinking_level),
             max_output_tokens=2048,
         )
@@ -45,15 +44,16 @@ class GeminiProvider:
             if declarations:
                 config.tools = [types.Tool(function_declarations=declarations)]
 
-        # Retry only transient Gemini load/rate-limit failures. Successful
-        # requests have no artificial delay.
+        started = time.perf_counter()
         for attempt in range(3):
             try:
-                return await self.client.aio.models.generate_content(
+                response = await self.client.aio.models.generate_content(
                     model=self.model,
                     contents=contents,
                     config=config,
                 )
+                log.info("Gemini response: model=%s thinking=%s latency=%.2fs tools=%s", self.model, self.thinking_level, time.perf_counter() - started, bool(tools))
+                return response
             except Exception as exc:
                 status = getattr(exc, "status_code", None)
                 message = str(exc).lower()
