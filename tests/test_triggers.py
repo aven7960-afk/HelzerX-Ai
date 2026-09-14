@@ -5,9 +5,15 @@ class Bot:
     user = type("User", (), {"id": 42})()
 
 
+class Author:
+    bot = False
+    id = 7
+
+
 class Message:
     def __init__(self, content, *, dm=False, mentions=None, reply_to_bot=False):
         self.content = content
+        self.author = Author()
         self.guild = None if dm else object()
         self.mentions = mentions or []
         self.reference = type("Ref", (), {"resolved": type("M", (), {"author": Bot.user})()})() if reply_to_bot else None
