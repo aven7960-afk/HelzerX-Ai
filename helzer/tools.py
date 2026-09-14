@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 import discord
-
 
 HIGH_RISK = {"ban_member", "kick_member", "delete_channel", "delete_role", "purge_messages", "create_channel"}
 
 
 def tool_specs() -> list[dict[str, Any]]:
     def fn(name, description, properties, required=()):
-        return {"type": "function", "name": name, "description": description,
-                "parameters": {"type": "object", "properties": properties,
-                               "required": list(required), "additionalProperties": False}}
+        return {"type": "function", "name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": list(required), "additionalProperties": False}}
     return [
         fn("server_info", "Get useful information about the current Discord server.", {}),
         fn("member_info", "Get information about a server member by user ID.", {"user_id": {"type": "integer"}}, ["user_id"]),
@@ -50,14 +48,10 @@ def _member(guild, user_id: int):
 async def execute(message, name: str, args: dict[str, Any]) -> dict[str, Any]:
     guild = _guild(message)
     if name == "server_info":
-        return {"ok": True, "id": guild.id, "name": guild.name, "member_count": guild.member_count,
-                "roles": [{"id": r.id, "name": r.name} for r in guild.roles if r.name != "@everyone"],
-                "channels": [{"id": c.id, "name": c.name, "type": str(c.type)} for c in guild.channels]}
+        return {"ok": True, "id": guild.id, "name": guild.name, "member_count": guild.member_count, "roles": [{"id": r.id, "name": r.name} for r in guild.roles if r.name != "@everyone"], "channels": [{"id": c.id, "name": c.name, "type": str(c.type)} for c in guild.channels]}
     if name == "member_info":
         m = _member(guild, int(args["user_id"]))
-        return {"ok": True, "id": m.id, "name": str(m), "display_name": m.display_name,
-                "bot": m.bot, "roles": [{"id": r.id, "name": r.name} for r in m.roles if r.name != "@everyone"],
-                "joined_at": m.joined_at.isoformat() if m.joined_at else None}
+        return {"ok": True, "id": m.id, "name": str(m), "display_name": m.display_name, "bot": m.bot, "roles": [{"id": r.id, "name": r.name} for r in m.roles if r.name != "@everyone"], "joined_at": m.joined_at.isoformat() if m.joined_at else None}
     if name == "send_message":
         channel = guild.get_channel(int(args["channel_id"]))
         if not isinstance(channel, discord.abc.Messageable): raise ValueError("Channel not found.")
@@ -67,13 +61,15 @@ async def execute(message, name: str, args: dict[str, Any]) -> dict[str, Any]:
         user = message.client.get_user(int(args["user_id"])) or await message.client.fetch_user(int(args["user_id"]))
         await user.send(args["content"])
         return {"ok": True, "action": "dm_sent", "user_id": user.id}
-    if name in {"timeout_member", "ban_member", "kick_member", "add_role", "remove_role"}:
+    if name == "timeout_member":
+        member = _member(guild, int(args["user_id"]))
+        minutes = max(1, min(int(args["minutes"]), 40320))
+        await member.timeout(timedelta(minutes=minutes), reason=args.get("reason") or "Requested through Helzer")
+        return {"ok": True, "action": "timeout_member", "user_id": member.id, "minutes": minutes}
+    if name in {"ban_member", "kick_member", "add_role", "remove_role"}:
         member = _member(guild, int(args["user_id"]))
         reason = args.get("reason") or "Requested through Helzer"
-        if name == "timeout_member":
-            minutes = max(1, min(int(args["minutes"]), 40320))
-            await member.timeout(discord.utils.utcnow() + discord.timedelta(minutes=minutes), reason=reason)
-        elif name == "ban_member": await guild.ban(member, reason=reason, delete_message_seconds=0)
+        if name == "ban_member": await guild.ban(member, reason=reason, delete_message_seconds=0)
         elif name == "kick_member": await guild.kick(member, reason=reason)
         else:
             role = guild.get_role(int(args["role_id"]))
