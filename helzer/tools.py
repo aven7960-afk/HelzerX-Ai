@@ -9,7 +9,10 @@ HIGH_RISK = {"timeout_member", "ban_member", "kick_member", "unban_member", "del
 
 def tool_specs() -> list[dict[str, Any]]:
     def fn(name, description, properties, required=()):
-        parameters = {"type": "object", "properties": properties, "additionalProperties": False}
+        # Gemini's FunctionDeclaration.parameters uses the protobuf Schema
+        # format. `additionalProperties` belongs to JSON Schema and is not a
+        # valid field there, so don't emit it here.
+        parameters = {"type": "object", "properties": properties}
         if required:
             parameters["required"] = list(required)
         return {"type": "function", "name": name, "description": description, "parameters": parameters}
