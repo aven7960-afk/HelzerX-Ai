@@ -21,6 +21,7 @@ class Settings:
     discord_token: str
     gemini_api_key: str
     gemini_model: str = "gemini-3.8-flash"
+    gemini_thinking_level: str = "low"
     timezone: str = "Asia/Colombo"
     owner_ids: set[int] = field(default_factory=set)
     allowed_role_ids: set[int] = field(default_factory=set)
@@ -37,10 +38,14 @@ class Settings:
             raise RuntimeError("DISCORD_TOKEN is missing")
         if not key:
             raise RuntimeError("GEMINI_API_KEY is missing")
+        thinking = os.getenv("GEMINI_THINKING_LEVEL", "low").strip().lower()
+        if thinking not in {"low", "medium", "high"}:
+            thinking = "low"
         return cls(
             discord_token=token,
             gemini_api_key=key,
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash",
+            gemini_thinking_level=thinking,
             timezone=os.getenv("HELZER_TIMEZONE", "Asia/Colombo").strip() or "Asia/Colombo",
             owner_ids=_csv_ints(os.getenv("HELZER_OWNER_IDS", "")),
             allowed_role_ids=_csv_ints(os.getenv("HELZER_ALLOWED_ROLE_IDS", "")),
