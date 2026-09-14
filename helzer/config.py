@@ -22,6 +22,8 @@ class Settings:
     gemini_api_key: str
     gemini_model: str = "gemini-3.8-flash"
     gemini_thinking_level: str = "low"
+    gemini_fast_model: str = "gemini-3.5-flash-lite"
+    gemini_fast_thinking_level: str = "minimal"
     timezone: str = "Asia/Colombo"
     owner_ids: set[int] = field(default_factory=set)
     allowed_role_ids: set[int] = field(default_factory=set)
@@ -41,11 +43,16 @@ class Settings:
         thinking = os.getenv("GEMINI_THINKING_LEVEL", "low").strip().lower()
         if thinking not in {"low", "medium", "high"}:
             thinking = "low"
+        fast_thinking = os.getenv("GEMINI_FAST_THINKING_LEVEL", "minimal").strip().lower()
+        if fast_thinking not in {"minimal", "low", "medium", "high"}:
+            fast_thinking = "minimal"
         return cls(
             discord_token=token,
             gemini_api_key=key,
             gemini_model=os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip() or "gemini-3.8-flash",
             gemini_thinking_level=thinking,
+            gemini_fast_model=os.getenv("GEMINI_FAST_MODEL", "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite",
+            gemini_fast_thinking_level=fast_thinking,
             timezone=os.getenv("HELZER_TIMEZONE", "Asia/Colombo").strip() or "Asia/Colombo",
             owner_ids=_csv_ints(os.getenv("HELZER_OWNER_IDS", "")),
             allowed_role_ids=_csv_ints(os.getenv("HELZER_ALLOWED_ROLE_IDS", "")),
