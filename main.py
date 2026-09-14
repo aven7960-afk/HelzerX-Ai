@@ -36,6 +36,8 @@ class HelzerBot(commands.Bot):
 
     async def close(self):
         self.agent.gemini.client.close()
+        if self.agent.fast_gemini is not self.agent.gemini:
+            self.agent.fast_gemini.client.close()
         await super().close()
 
 
