@@ -68,7 +68,7 @@ class HelzerAgent:
     def __init__(self, bot, settings):
         self.bot = bot
         self.settings = settings
-        self.gemini = GeminiProvider(settings.gemini_api_key, settings.gemini_model)
+        self.gemini = GeminiProvider(settings.gemini_api_key, settings.gemini_model, settings.gemini_thinking_level)
         self.memory = MemoryStore(settings.database_path, settings.max_memory_messages)
         self.pending: dict[str, dict[str, Any]] = {}
         self._rate_lock = asyncio.Lock()
@@ -91,9 +91,6 @@ class HelzerAgent:
         if name in {"lock_channel", "unlock_channel", "set_slowmode", "purge_messages"}:
             channel = getattr(message, "channel", None)
             if channel is not None:
-                # If Gemini omitted the ID or hallucinated an invalid one,
-                # these commands should target the channel where the request
-                # was made rather than failing with "Text channel not found".
                 current_id = getattr(channel, "id", None)
                 supplied = args.get("channel_id")
                 if not supplied or str(supplied) != str(current_id):
@@ -141,7 +138,7 @@ class HelzerAgent:
         requester_id = getattr(user, "id", 0)
         scope = scope_for(message)
         history = await self.memory.recent(scope)
-        contents: list[Any] = [discord_to_gemini_content(role, content) for role, content in history[-12:]]
+        contents: list[Any] = [discord_to_gemini_content(role, content) for role, content in history[-8:]]
         contents.append(discord_to_gemini_content("user", discord_context(message) + "\nUser request: " + prompt))
         guild = getattr(message, "guild", None)
         system = build_system_prompt(self.settings.timezone, guild.name if guild else None)
