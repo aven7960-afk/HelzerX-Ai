@@ -8,7 +8,7 @@ from typing import Any
 import discord
 
 from .context import actor, discord_context, scope_for
-from .gemini import GeminiProvider
+from .gemini import GeminiProvider, GeminiQuotaError
 from .memory import MemoryStore
 from .prompts import build_system_prompt
 from .tools import HIGH_RISK, execute, tool_specs
@@ -78,8 +78,18 @@ class HelzerAgent:
             channel = getattr(message, "channel", None)
             if channel is not None:
                 current_id = getattr(channel, "id", None)
-                if not args.get("channel_id") or str(args["channel_id"]) != str(current_id): args["channel_id"] = current_id
+                if not args.get("channel_id") or str(args["channel_id"]) != str(current_id):
+                    args["channel_id"] = str(current_id)
         return args
+
+    async def _generate(self, provider, contents, system, tools):
+        try:
+            return await provider.generate(contents, system, tools)
+        except GeminiQuotaError:
+            if provider is self.fast_gemini and self.gemini is not self.fast_gemini:
+                log.warning("Fast Gemini quota exhausted; trying primary model=%s", self.gemini.model)
+                return await self.gemini.generate(contents, system, tools)
+            raise
 
     async def handle_message(self, message: discord.Message):
         if message.author.bot or not should_respond(message, self.bot) or (self.settings.dm_only and message.guild is not None): return
@@ -91,6 +101,9 @@ class HelzerAgent:
         started = time.perf_counter()
         async with message.channel.typing():
             try: result = await self.respond(message, prompt)
+            except GeminiQuotaError:
+                log.exception("All configured Gemini models are out of quota")
+                result = "Gemini quota is currently exhausted. Please try again after the quota resets or configure another Gemini project/API key."
             except Exception:
                 log.exception("Message processing failed: user=%s guild=%s channel=%s prompt=%r", getattr(message.author, "id", None), getattr(getattr(message, "guild", None), "id", None), getattr(getattr(message, "channel", None), "id", None), prompt)
                 result = "Gemini is temporarily unavailable. Please try again in a moment."
@@ -108,12 +121,12 @@ class HelzerAgent:
         contents: list[Any] = [discord_to_gemini_content(role, content) for role, content in history[-8:]]
         contents.append(discord_to_gemini_content("user", discord_context(message) + "\nUser request: " + prompt))
         guild = getattr(message, "guild", None)
-        needs_tools = bool(guild and self._needs_tools(prompt))
+        needs_tools = self._needs_tools(prompt)
         tools = self._tool_specs if needs_tools else []
-        provider = self.gemini if needs_tools else self.fast_gemini
+        provider = self.fast_gemini
         system = build_system_prompt(self.settings.timezone, guild.name if guild else None)
         for _ in range(self.settings.max_tool_rounds):
-            response = await provider.generate(contents, system, tools)
+            response = await self._generate(provider, contents, system, tools)
             calls = provider.function_calls(response)
             if not calls:
                 answer = provider.text(response) or "I’m here. Tell me what you need."
