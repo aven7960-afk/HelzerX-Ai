@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from google import genai
@@ -30,7 +29,6 @@ class GeminiProvider:
     async def generate(self, contents: list[Any], system_instruction: str, tools=None):
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=0.7,
             max_output_tokens=4096,
         )
         if tools:
@@ -58,4 +56,8 @@ class GeminiProvider:
 
     @staticmethod
     def function_result(name: str, result: dict[str, Any]):
-        return types.Part.from_function_response(name=name, response=result)
+        # Gemini expects the function response part inside a Content message.
+        return types.Content(
+            role="user",
+            parts=[types.Part.from_function_response(name=name, response=result)],
+        )
