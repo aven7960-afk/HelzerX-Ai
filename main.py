@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import logging
+
 import discord
 from discord.ext import commands
+from dotenv import load_dotenv
 
 from helzer.agent import HelzerAgent
 from helzer.config import Settings
 
+load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
 log = logging.getLogger("helzer")
 
