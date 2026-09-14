@@ -13,12 +13,19 @@ from .prompts import build_system_prompt
 from .tools import HIGH_RISK, execute, tool_specs
 from .triggers import should_respond, strip_trigger
 
+MUTATING_TOOLS = {
+    "send_message", "send_dm", "timeout_member", "ban_member", "kick_member", "unban_member",
+    "add_role", "remove_role", "create_role", "create_channel", "delete_channel", "rename_channel",
+    "lock_channel", "unlock_channel", "set_slowmode", "purge_messages",
+}
+
 
 class ConfirmationView(discord.ui.View):
-    def __init__(self, agent, key: str):
+    def __init__(self, agent, key: str, title: str):
         super().__init__(timeout=90)
         self.agent = agent
         self.key = key
+        self.title = title
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -27,12 +34,20 @@ class ConfirmationView(discord.ui.View):
         if not pending:
             await interaction.followup.send("That confirmation expired.", ephemeral=True)
             return
+        if interaction.user.id != pending["message"].author.id:
+            await interaction.followup.send("Only the requester can confirm this action.", ephemeral=True)
+            self.agent.pending[self.key] = pending
+            return
         result = await self.agent.execute_pending(pending)
         await interaction.followup.send(self.agent.result_text(result), ephemeral=True)
         self.stop()
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        pending = self.agent.pending.get(self.key)
+        if pending and interaction.user.id != pending["message"].author.id:
+            await interaction.response.send_message("Only the requester can cancel this action.", ephemeral=True)
+            return
         self.agent.pending.pop(self.key, None)
         await interaction.response.send_message("Cancelled.", ephemeral=True)
         self.stop()
@@ -73,7 +88,7 @@ class HelzerAgent:
             except Exception:
                 result = "I hit an internal error while processing that. Check the bot logs for the exact failure."
             if isinstance(result, discord.ui.View):
-                await message.reply("That action needs your confirmation.", view=result, mention_author=False)
+                await message.reply("This action changes the server or sends a message. Confirm it below.", view=result, mention_author=False)
             else:
                 await self._send_text(message, result)
 
@@ -87,11 +102,8 @@ class HelzerAgent:
     async def respond(self, message: discord.Message, prompt: str):
         scope = scope_for(message)
         history = await self.memory.recent(scope)
-        contents: list[Any] = []
-        for role, content in history:
-            contents.append(discord_to_gemini_content(role, content))
-        current = discord_context(message) + "\nUser request: " + prompt
-        contents.append(discord_to_gemini_content("user", current))
+        contents: list[Any] = [discord_to_gemini_content(role, content) for role, content in history]
+        contents.append(discord_to_gemini_content("user", discord_context(message) + "\nUser request: " + prompt))
         guild_name = message.guild.name if message.guild else None
         system = build_system_prompt(self.settings.timezone, guild_name)
         tools = tool_specs() if message.guild else []
@@ -105,19 +117,19 @@ class HelzerAgent:
                 await self.memory.add(scope, message.author.id, "assistant", answer, time.time())
                 return answer
 
-            model_content = response.candidates[0].content
-            contents.append(model_content)
+            contents.append(response.candidates[0].content)
             for call in calls:
                 name = call.name
                 args = dict(call.args or {})
-                if name in HIGH_RISK:
-                    if not message.guild or not isinstance(message.author, discord.Member) or not self.authorized(message.author):
-                        result = {"ok": False, "error": "The requester is not authorized for this server action."}
-                        contents.append(self.gemini.function_result(name, result))
+                if name in MUTATING_TOOLS:
+                    if not isinstance(message.author, discord.Member) or not self.authorized(message.author):
+                        contents.append(self.gemini.function_result(name, {"ok": False, "error": "Requester is not authorized for server actions."}))
                         continue
+                if name in HIGH_RISK:
                     key = f"{message.id}:{name}:{time.time_ns()}"
                     self.pending[key] = {"message": message, "name": name, "args": args}
-                    return ConfirmationView(self, key)
+                    details = ", ".join(f"{k}={v}" for k, v in args.items())
+                    return ConfirmationView(self, key, f"{name}: {details}")
                 try:
                     result = await execute(message, name, args)
                 except Exception as exc:
@@ -127,9 +139,8 @@ class HelzerAgent:
         return "I stopped the action chain because it reached the safety limit."
 
     async def execute_pending(self, pending: dict[str, Any]):
-        message = pending["message"]
         try:
-            return await execute(message, pending["name"], pending["args"])
+            return await execute(pending["message"], pending["name"], pending["args"])
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
