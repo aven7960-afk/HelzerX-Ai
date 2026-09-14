@@ -19,7 +19,7 @@ log = logging.getLogger("helzer.agent")
 MUTATING_TOOLS = {
     "send_message", "send_dm", "timeout_member", "ban_member", "kick_member", "unban_member",
     "add_role", "remove_role", "create_role", "create_channel", "delete_channel", "rename_channel",
-    "lock_channel", "unlock_channel", "set_slowmode", "purge_messages",
+    "lock_channel", "unlock_channel", "set_slowmode", "purge_messages", "assign_role_all",
 }
 TOOL_HINTS = ("lock", "unlock", "channel", "dm", "direct message", "message", "send", "role", "timeout", "kick", "ban", "unban", "purge", "delete", "remove", "add", "create", "rename", "slowmode", "slow mode", "server", "member", "permission", "permissions")
 
