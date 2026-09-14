@@ -25,7 +25,7 @@ def tool_specs() -> list[dict[str, Any]]:
         fn("unban_member", "Unban a user by exact Discord user ID.", {"user_id": discord_id, "reason": {"type": "string"}}, ["user_id"]),
         fn("add_role", "Add a role to a member by exact Discord IDs.", {"user_id": discord_id, "role_id": discord_id}, ["user_id", "role_id"]),
         fn("remove_role", "Remove a role from a member by exact Discord IDs.", {"user_id": discord_id, "role_id": discord_id}, ["user_id", "role_id"]),
-        fn("assign_role_all", "Assign a role to every member in the current server. Existing role holders are skipped. This can take time because Discord rate-limits member role changes.", {"role_id": discord_id, "reason": {"type": "string"}}, ["role_id"]),
+        fn("assign_role_all", "Assign a role to every member in the current server, including bots. Existing role holders are skipped. This can take time because Discord rate-limits member role changes.", {"role_id": discord_id, "reason": {"type": "string"}}, ["role_id"]),
         fn("create_role", "Create a server role.", {"name": {"type": "string"}, "reason": {"type": "string"}}, ["name"]),
         fn("create_channel", "Create a text channel.", {"name": {"type": "string"}, "category_id": discord_id, "reason": {"type": "string"}}, ["name"]),
         fn("delete_channel", "Delete a Discord channel by exact channel ID.", {"channel_id": discord_id, "reason": {"type": "string"}}, ["channel_id"]),
@@ -92,7 +92,7 @@ async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[st
         skipped = 0
         failed = 0
         for index, member in enumerate(members, start=1):
-            if member.bot or role in member.roles:
+            if role in member.roles:
                 skipped += 1
                 continue
             try:
@@ -100,10 +100,9 @@ async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[st
                 assigned += 1
             except (discord.Forbidden, discord.HTTPException) as exc:
                 failed += 1
-                log_message = f"Bulk role assignment failed for member={member.id}: {exc}"
                 if bot:
                     import logging
-                    logging.getLogger("helzer.tools").warning(log_message)
+                    logging.getLogger("helzer.tools").warning("Bulk role assignment failed for member=%s: %s", member.id, exc)
             if index % 25 == 0:
                 await asyncio.sleep(0)
 
