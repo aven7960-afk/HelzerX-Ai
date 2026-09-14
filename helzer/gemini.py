@@ -14,8 +14,9 @@ log = logging.getLogger("helzer.gemini")
 class GeminiProvider:
     """Gemini adapter with native multimodal content and function calling."""
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, thinking_level: str = "low"):
         self.model = model
+        self.thinking_level = thinking_level if thinking_level in {"low", "medium", "high"} else "low"
         self.client = genai.Client(api_key=api_key)
 
     @staticmethod
@@ -34,7 +35,10 @@ class GeminiProvider:
     async def generate(self, contents: list[Any], system_instruction: str, tools=None):
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            max_output_tokens=4096,
+            # Gemini 3.8 Flash defaults to medium thinking. Low is much faster
+            # for Discord chat while still retaining reasoning for tool use.
+            thinking_config=types.ThinkingConfig(thinking_level=self.thinking_level),
+            max_output_tokens=2048,
         )
         if tools:
             declarations = self._function_declarations(tools)
