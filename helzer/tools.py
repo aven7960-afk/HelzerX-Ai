@@ -9,9 +9,6 @@ HIGH_RISK = {"timeout_member", "ban_member", "kick_member", "unban_member", "del
 
 def tool_specs() -> list[dict[str, Any]]:
     def fn(name, description, properties, required=()):
-        # Gemini's FunctionDeclaration.parameters uses the protobuf Schema
-        # format. `additionalProperties` belongs to JSON Schema and is not a
-        # valid field there, so don't emit it here.
         parameters = {"type": "object", "properties": properties}
         if required:
             parameters["required"] = list(required)
@@ -51,7 +48,7 @@ def _member(guild, user_id: int):
     return member
 
 
-async def execute(message, name: str, args: dict[str, Any]) -> dict[str, Any]:
+async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[str, Any]:
     guild = _guild(message)
     if name == "server_info":
         return {"ok": True, "id": guild.id, "name": guild.name, "member_count": guild.member_count, "roles": [{"id": r.id, "name": r.name} for r in guild.roles if r.name != "@everyone"], "channels": [{"id": c.id, "name": c.name, "type": str(c.type)} for c in guild.channels]}
@@ -64,7 +61,10 @@ async def execute(message, name: str, args: dict[str, Any]) -> dict[str, Any]:
         await channel.send(args["content"])
         return {"ok": True, "action": "message_sent", "channel_id": channel.id}
     if name == "send_dm":
-        user = message.client.get_user(int(args["user_id"])) or await message.client.fetch_user(int(args["user_id"]))
+        client = bot or getattr(message, "client", None)
+        if client is None:
+            raise ValueError("Discord client is unavailable.")
+        user = client.get_user(int(args["user_id"])) or await client.fetch_user(int(args["user_id"]))
         await user.send(args["content"])
         return {"ok": True, "action": "dm_sent", "user_id": user.id}
     if name == "timeout_member":
