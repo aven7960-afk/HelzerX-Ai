@@ -19,16 +19,16 @@ def discord_context(message) -> str:
     guild = getattr(message, "guild", None)
     channel = getattr(message, "channel", None)
     parts = [
-        f"requester_id={getattr(user, 'id', 0)}",
-        f"channel_id={getattr(channel, 'id', 0)}",
-        f"guild_id={getattr(guild, 'id', 0)}",
+        f"requester_id={str(getattr(user, 'id', 0))}",
+        f"channel_id={str(getattr(channel, 'id', 0))}",
+        f"guild_id={str(getattr(guild, 'id', 0))}",
     ]
     if guild:
         parts.append(f"guild_name={guild.name!r}")
     if getattr(message, "mentions", None):
-        parts.append("mentioned_user_ids=" + repr([u.id for u in message.mentions]))
+        parts.append("mentioned_user_ids=" + repr([str(u.id) for u in message.mentions]))
     if getattr(message, "channel_mentions", None):
-        parts.append("mentioned_channel_ids=" + repr([c.id for c in message.channel_mentions]))
+        parts.append("mentioned_channel_ids=" + repr([str(c.id) for c in message.channel_mentions]))
     reference = getattr(message, "reference", None)
     resolved = getattr(reference, "resolved", None)
     if resolved is not None and getattr(resolved, "content", None):
