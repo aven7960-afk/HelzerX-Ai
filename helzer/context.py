@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 
+def actor(message):
+    return getattr(message, "author", None) or getattr(message, "user", None)
+
+
 def scope_for(message) -> str:
-    if message.guild is None:
-        return f"dm:{message.author.id}"
-    return f"guild:{message.guild.id}:channel:{message.channel.id}:user:{message.author.id}"
+    user = actor(message)
+    guild = getattr(message, "guild", None)
+    channel = getattr(message, "channel", None)
+    if guild is None:
+        return f"dm:{getattr(user, 'id', 0)}"
+    return f"guild:{guild.id}:channel:{getattr(channel, 'id', 0)}:user:{getattr(user, 'id', 0)}"
 
 
 def discord_context(message) -> str:
+    user = actor(message)
     guild = getattr(message, "guild", None)
     channel = getattr(message, "channel", None)
     parts = [
-        f"requester_id={getattr(message.author, 'id', 0)}",
+        f"requester_id={getattr(user, 'id', 0)}",
         f"channel_id={getattr(channel, 'id', 0)}",
         f"guild_id={getattr(guild, 'id', 0)}",
     ]
