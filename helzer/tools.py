@@ -10,8 +10,7 @@ HIGH_RISK = {"timeout_member", "ban_member", "kick_member", "unban_member", "del
 def tool_specs() -> list[dict[str, Any]]:
     def fn(name, description, properties, required=()):
         parameters = {"type": "object", "properties": properties}
-        if required:
-            parameters["required"] = list(required)
+        if required: parameters["required"] = list(required)
         return {"type": "function", "name": name, "description": description, "parameters": parameters}
     return [
         fn("server_info", "Get useful information about the current Discord server.", {}),
@@ -36,19 +35,34 @@ def tool_specs() -> list[dict[str, Any]]:
 
 
 def _guild(message):
-    if message.guild is None:
-        raise ValueError("This action requires a server context.")
+    if message.guild is None: raise ValueError("This action requires a server context.")
     return message.guild
 
 
 def _member(guild, user_id: int):
     member = guild.get_member(user_id)
-    if member is None:
-        raise ValueError("That member is not available in this server.")
+    if member is None: raise ValueError("That member is not available in this server.")
     return member
 
 
 async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[str, Any]:
+    if name == "send_dm":
+        client = bot or getattr(message, "client", None)
+        if client is None: raise ValueError("Discord client is unavailable.")
+        user_id = int(args["user_id"])
+        try:
+            user = client.get_user(user_id) or await client.fetch_user(user_id)
+            await user.send(args["content"])
+            return {"ok": True, "action": "dm_sent", "user_id": user.id}
+        except discord.NotFound as exc:
+            if getattr(exc, "code", None) == 10013: raise ValueError("Discord could not find that user. Check the user ID.") from exc
+            raise ValueError("Discord could not find the requested DM recipient.") from exc
+        except discord.Forbidden as exc:
+            raise ValueError("Discord refused the DM. The recipient may block DMs/message requests or have blocked the bot.") from exc
+        except discord.HTTPException as exc:
+            if getattr(exc, "code", None) == 50007: raise ValueError("Discord cannot deliver a DM to that user. Their DM/privacy settings may block it.") from exc
+            raise ValueError(f"Discord rejected the DM (HTTP {exc.status}, code {getattr(exc, 'code', 'unknown')}).") from exc
+
     guild = _guild(message)
     if name == "server_info":
         return {"ok": True, "id": guild.id, "name": guild.name, "member_count": guild.member_count, "roles": [{"id": r.id, "name": r.name} for r in guild.roles if r.name != "@everyone"], "channels": [{"id": c.id, "name": c.name, "type": str(c.type)} for c in guild.channels]}
@@ -60,21 +74,12 @@ async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[st
         if not isinstance(channel, discord.abc.Messageable): raise ValueError("Channel not found.")
         await channel.send(args["content"])
         return {"ok": True, "action": "message_sent", "channel_id": channel.id}
-    if name == "send_dm":
-        client = bot or getattr(message, "client", None)
-        if client is None:
-            raise ValueError("Discord client is unavailable.")
-        user = client.get_user(int(args["user_id"])) or await client.fetch_user(int(args["user_id"]))
-        await user.send(args["content"])
-        return {"ok": True, "action": "dm_sent", "user_id": user.id}
     if name == "timeout_member":
-        member = _member(guild, int(args["user_id"]))
-        minutes = max(1, min(int(args["minutes"]), 40320))
+        member = _member(guild, int(args["user_id"])); minutes = max(1, min(int(args["minutes"]), 40320))
         await member.timeout(timedelta(minutes=minutes), reason=args.get("reason") or "Requested through Helzer")
         return {"ok": True, "action": "timeout_member", "user_id": member.id, "minutes": minutes}
     if name in {"ban_member", "kick_member", "add_role", "remove_role"}:
-        member = _member(guild, int(args["user_id"]))
-        reason = args.get("reason") or "Requested through Helzer"
+        member = _member(guild, int(args["user_id"])); reason = args.get("reason") or "Requested through Helzer"
         if name == "ban_member": await guild.ban(member, reason=reason, delete_message_seconds=0)
         elif name == "kick_member": await guild.kick(member, reason=reason)
         else:
@@ -106,8 +111,7 @@ async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[st
     if name in {"lock_channel", "unlock_channel"}:
         channel = guild.get_channel(int(args["channel_id"]))
         if not isinstance(channel, discord.TextChannel): raise ValueError("Text channel not found.")
-        overwrite = channel.overwrites_for(guild.default_role)
-        overwrite.send_messages = name == "unlock_channel"
+        overwrite = channel.overwrites_for(guild.default_role); overwrite.send_messages = name == "unlock_channel"
         await channel.set_permissions(guild.default_role, overwrite=overwrite, reason="Updated through Helzer")
         return {"ok": True, "action": name, "channel_id": channel.id}
     if name == "set_slowmode":
@@ -118,7 +122,6 @@ async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[st
     if name == "purge_messages":
         channel = guild.get_channel(int(args["channel_id"]))
         if not isinstance(channel, discord.TextChannel): raise ValueError("Text channel not found.")
-        amount = max(1, min(int(args["amount"]), 100))
-        deleted = await channel.purge(limit=amount)
+        amount = max(1, min(int(args["amount"]), 100)); deleted = await channel.purge(limit=amount)
         return {"ok": True, "action": "purge_messages", "deleted": len(deleted), "channel_id": channel.id}
     raise ValueError(f"Unknown tool: {name}")
