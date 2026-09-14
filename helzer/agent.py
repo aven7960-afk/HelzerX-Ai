@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import Any
 
@@ -12,6 +13,8 @@ from .memory import MemoryStore
 from .prompts import build_system_prompt
 from .tools import HIGH_RISK, execute, tool_specs
 from .triggers import should_respond, strip_trigger
+
+log = logging.getLogger("helzer.agent")
 
 MUTATING_TOOLS = {
     "send_message", "send_dm", "timeout_member", "ban_member", "kick_member", "unban_member",
@@ -84,6 +87,13 @@ class HelzerAgent:
             try:
                 result = await self.respond(message, prompt)
             except Exception:
+                log.exception(
+                    "Message processing failed: user=%s guild=%s channel=%s prompt=%r",
+                    getattr(message.author, "id", None),
+                    getattr(getattr(message, "guild", None), "id", None),
+                    getattr(getattr(message, "channel", None), "id", None),
+                    prompt,
+                )
                 result = "I hit an internal error while processing that. Check the bot logs for the exact failure."
             if isinstance(result, discord.ui.View):
                 await message.reply("This action changes the server or sends a message. Confirm it below.", view=result, mention_author=False)
