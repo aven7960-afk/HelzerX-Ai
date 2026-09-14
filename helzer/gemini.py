@@ -12,12 +12,18 @@ from google.genai import types
 log = logging.getLogger("helzer.gemini")
 
 
+class GeminiQuotaError(RuntimeError):
+    """Raised when Gemini rejects a request because the project quota is exhausted."""
+
+
 class GeminiProvider:
     """Gemini adapter with native multimodal content and function calling."""
 
+    VALID_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
+
     def __init__(self, api_key: str, model: str, thinking_level: str = "low"):
         self.model = model
-        self.thinking_level = thinking_level if thinking_level in {"minimal", "low", "medium", "high"} else "low"
+        self.thinking_level = thinking_level if thinking_level in self.VALID_THINKING_LEVELS else "low"
         self.client = genai.Client(api_key=api_key)
 
     @staticmethod
@@ -32,6 +38,18 @@ class GeminiProvider:
                 parameters=tool.get("parameters", {"type": "object", "properties": {}}),
             ))
         return declarations
+
+    @staticmethod
+    def _is_quota_exhausted(exc: Exception) -> bool:
+        message = str(exc).lower()
+        return any(marker in message for marker in (
+            "quota exceeded",
+            "free_tier_requests",
+            "generate requests per day",
+            "requests per day",
+            "daily quota",
+            "resource_exhausted",
+        ))
 
     async def generate(self, contents: list[Any], system_instruction: str, tools=None):
         config = types.GenerateContentConfig(
@@ -52,9 +70,21 @@ class GeminiProvider:
                     contents=contents,
                     config=config,
                 )
-                log.info("Gemini response: model=%s thinking=%s latency=%.2fs tools=%s", self.model, self.thinking_level, time.perf_counter() - started, bool(tools))
+                log.info(
+                    "Gemini response: model=%s thinking=%s latency=%.2fs tools=%s",
+                    self.model,
+                    self.thinking_level,
+                    time.perf_counter() - started,
+                    bool(tools),
+                )
                 return response
             except Exception as exc:
+                if self._is_quota_exhausted(exc):
+                    log.error("Gemini quota exhausted: model=%s", self.model)
+                    raise GeminiQuotaError(
+                        f"Gemini quota exhausted for model {self.model}."
+                    ) from exc
+
                 status = getattr(exc, "status_code", None)
                 message = str(exc).lower()
                 transient = status in {429, 500, 502, 503, 504} or any(
