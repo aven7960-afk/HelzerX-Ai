@@ -6,7 +6,7 @@ from typing import Any
 
 import discord
 
-from .context import discord_context, scope_for
+from .context import actor, discord_context, scope_for
 from .gemini import GeminiProvider
 from .memory import MemoryStore
 from .prompts import build_system_prompt
@@ -30,14 +30,14 @@ class ConfirmationView(discord.ui.View):
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        pending = self.agent.pending.pop(self.key, None)
+        pending = self.agent.pending.get(self.key)
         if not pending:
             await interaction.followup.send("That confirmation expired.", ephemeral=True)
             return
-        if interaction.user.id != pending["message"].author.id:
+        if interaction.user.id != pending["requester_id"]:
             await interaction.followup.send("Only the requester can confirm this action.", ephemeral=True)
-            self.agent.pending[self.key] = pending
             return
+        self.agent.pending.pop(self.key, None)
         result = await self.agent.execute_pending(pending)
         await interaction.followup.send(self.agent.result_text(result), ephemeral=True)
         self.stop()
@@ -45,7 +45,7 @@ class ConfirmationView(discord.ui.View):
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
         pending = self.agent.pending.get(self.key)
-        if pending and interaction.user.id != pending["message"].author.id:
+        if pending and interaction.user.id != pending["requester_id"]:
             await interaction.response.send_message("Only the requester can cancel this action.", ephemeral=True)
             return
         self.agent.pending.pop(self.key, None)
@@ -73,9 +73,7 @@ class HelzerAgent:
             return
         if self.settings.dm_only and message.guild is not None:
             return
-        prompt = strip_trigger(message.content, self.bot).strip()
-        if not prompt:
-            prompt = "Talk naturally with me and help me with what I need."
+        prompt = strip_trigger(message.content, self.bot).strip() or "Talk naturally with me and help me with what I need."
         async with self._rate_lock:
             now = time.monotonic()
             previous = self._last_request.get(message.author.id, 0)
@@ -99,22 +97,24 @@ class HelzerAgent:
         for start in range(0, len(text), 1900):
             await message.reply(text[start:start + 1900], mention_author=False)
 
-    async def respond(self, message: discord.Message, prompt: str):
+    async def respond(self, message, prompt: str):
+        user = actor(message)
+        requester_id = getattr(user, "id", 0)
         scope = scope_for(message)
         history = await self.memory.recent(scope)
         contents: list[Any] = [discord_to_gemini_content(role, content) for role, content in history]
         contents.append(discord_to_gemini_content("user", discord_context(message) + "\nUser request: " + prompt))
-        guild_name = message.guild.name if message.guild else None
-        system = build_system_prompt(self.settings.timezone, guild_name)
-        tools = tool_specs() if message.guild else []
+        guild = getattr(message, "guild", None)
+        system = build_system_prompt(self.settings.timezone, guild.name if guild else None)
+        tools = tool_specs() if guild else []
 
         for _ in range(self.settings.max_tool_rounds):
             response = await self.gemini.generate(contents, system, tools)
             calls = self.gemini.function_calls(response)
             if not calls:
                 answer = self.gemini.text(response) or "I’m here. Tell me what you need."
-                await self.memory.add(scope, message.author.id, "user", prompt, time.time())
-                await self.memory.add(scope, message.author.id, "assistant", answer, time.time())
+                await self.memory.add(scope, requester_id, "user", prompt, time.time())
+                await self.memory.add(scope, requester_id, "assistant", answer, time.time())
                 return answer
 
             contents.append(response.candidates[0].content)
@@ -122,12 +122,12 @@ class HelzerAgent:
                 name = call.name
                 args = dict(call.args or {})
                 if name in MUTATING_TOOLS:
-                    if not isinstance(message.author, discord.Member) or not self.authorized(message.author):
+                    if not guild or not isinstance(user, discord.Member) or not self.authorized(user):
                         contents.append(self.gemini.function_result(name, {"ok": False, "error": "Requester is not authorized for server actions."}))
                         continue
                 if name in HIGH_RISK:
-                    key = f"{message.id}:{name}:{time.time_ns()}"
-                    self.pending[key] = {"message": message, "name": name, "args": args}
+                    key = f"{getattr(message, 'id', requester_id)}:{name}:{time.time_ns()}"
+                    self.pending[key] = {"message": message, "requester_id": requester_id, "name": name, "args": args}
                     details = ", ".join(f"{k}={v}" for k, v in args.items())
                     return ConfirmationView(self, key, f"{name}: {details}")
                 try:
