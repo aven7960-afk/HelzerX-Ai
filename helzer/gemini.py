@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import logging
+import random
 from typing import Any
 
 from google import genai
 from google.genai import types
+
+log = logging.getLogger("helzer.gemini")
 
 
 class GeminiProvider:
@@ -35,11 +40,27 @@ class GeminiProvider:
             declarations = self._function_declarations(tools)
             if declarations:
                 config.tools = [types.Tool(function_declarations=declarations)]
-        return await self.client.aio.models.generate_content(
-            model=self.model,
-            contents=contents,
-            config=config,
-        )
+
+        # Retry only transient Gemini load/rate-limit failures. Successful
+        # requests have no artificial delay.
+        for attempt in range(3):
+            try:
+                return await self.client.aio.models.generate_content(
+                    model=self.model,
+                    contents=contents,
+                    config=config,
+                )
+            except Exception as exc:
+                status = getattr(exc, "status_code", None)
+                message = str(exc).lower()
+                transient = status in {429, 500, 502, 503, 504} or any(
+                    marker in message for marker in ("429", "500", "502", "503", "504", "unavailable", "temporarily")
+                )
+                if not transient or attempt == 2:
+                    raise
+                delay = min(1.5 * (2 ** attempt) + random.uniform(0, 0.25), 4.0)
+                log.warning("Transient Gemini failure (%s); retrying in %.2fs", type(exc).__name__, delay)
+                await asyncio.sleep(delay)
 
     @staticmethod
     def parts(response):
@@ -56,7 +77,6 @@ class GeminiProvider:
 
     @staticmethod
     def function_result(name: str, result: dict[str, Any]):
-        # Gemini expects the function response part inside a Content message.
         return types.Content(
             role="user",
             parts=[types.Part.from_function_response(name=name, response=result)],
