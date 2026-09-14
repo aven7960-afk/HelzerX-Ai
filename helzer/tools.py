@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 from typing import Any
 import discord
 
-HIGH_RISK = {"timeout_member", "ban_member", "kick_member", "unban_member", "delete_channel", "purge_messages", "create_channel", "lock_channel", "unlock_channel"}
+HIGH_RISK = {"timeout_member", "ban_member", "kick_member", "unban_member", "delete_channel", "purge_messages", "create_channel", "lock_channel", "unlock_channel", "assign_role_all"}
 
 
 def tool_specs() -> list[dict[str, Any]]:
@@ -24,6 +25,7 @@ def tool_specs() -> list[dict[str, Any]]:
         fn("unban_member", "Unban a user by exact Discord user ID.", {"user_id": discord_id, "reason": {"type": "string"}}, ["user_id"]),
         fn("add_role", "Add a role to a member by exact Discord IDs.", {"user_id": discord_id, "role_id": discord_id}, ["user_id", "role_id"]),
         fn("remove_role", "Remove a role from a member by exact Discord IDs.", {"user_id": discord_id, "role_id": discord_id}, ["user_id", "role_id"]),
+        fn("assign_role_all", "Assign a role to every member in the current server. Existing role holders are skipped. This can take time because Discord rate-limits member role changes.", {"role_id": discord_id, "reason": {"type": "string"}}, ["role_id"]),
         fn("create_role", "Create a server role.", {"name": {"type": "string"}, "reason": {"type": "string"}}, ["name"]),
         fn("create_channel", "Create a text channel.", {"name": {"type": "string"}, "category_id": discord_id, "reason": {"type": "string"}}, ["name"]),
         fn("delete_channel", "Delete a Discord channel by exact channel ID.", {"channel_id": discord_id, "reason": {"type": "string"}}, ["channel_id"]),
@@ -75,6 +77,37 @@ async def execute(message, name: str, args: dict[str, Any], bot=None) -> dict[st
         if not isinstance(channel, discord.abc.Messageable): raise ValueError("Channel not found.")
         await channel.send(args["content"])
         return {"ok": True, "action": "message_sent", "channel_id": str(channel.id)}
+    if name == "assign_role_all":
+        role_id = int(str(args["role_id"]).strip())
+        role = guild.get_role(role_id)
+        if role is None: raise ValueError("Role not found. Check the role ID.")
+        if role.is_default(): raise ValueError("The @everyone role cannot be assigned this way.")
+        me = guild.me
+        if me is None: raise ValueError("The bot member is unavailable in this server.")
+        if not me.guild_permissions.manage_roles: raise ValueError("The bot needs Manage Roles permission.")
+        if not role.is_assignable(): raise ValueError("That role is not assignable. Move the bot's highest role above the target role and check Manage Roles.")
+
+        members = list(guild.members)
+        assigned = 0
+        skipped = 0
+        failed = 0
+        for index, member in enumerate(members, start=1):
+            if member.bot or role in member.roles:
+                skipped += 1
+                continue
+            try:
+                await member.add_roles(role, reason=args.get("reason") or "Bulk role assignment through Helzer")
+                assigned += 1
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                failed += 1
+                log_message = f"Bulk role assignment failed for member={member.id}: {exc}"
+                if bot:
+                    import logging
+                    logging.getLogger("helzer.tools").warning(log_message)
+            if index % 25 == 0:
+                await asyncio.sleep(0)
+
+        return {"ok": True, "action": "assign_role_all", "role_id": str(role.id), "role_name": role.name, "total_members": len(members), "assigned": assigned, "skipped": skipped, "failed": failed}
     if name == "timeout_member":
         member = _member(guild, int(str(args["user_id"]).strip())); minutes = max(1, min(int(args["minutes"]), 40320))
         await member.timeout(timedelta(minutes=minutes), reason=args.get("reason") or "Requested through Helzer")
