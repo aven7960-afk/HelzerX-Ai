@@ -4,12 +4,15 @@ from datetime import timedelta
 from typing import Any
 import discord
 
-HIGH_RISK = {"ban_member", "kick_member", "delete_channel", "delete_role", "purge_messages", "create_channel"}
+HIGH_RISK = {"timeout_member", "ban_member", "kick_member", "unban_member", "delete_channel", "purge_messages", "create_channel", "lock_channel", "unlock_channel"}
 
 
 def tool_specs() -> list[dict[str, Any]]:
     def fn(name, description, properties, required=()):
-        return {"type": "function", "name": name, "description": description, "parameters": {"type": "object", "properties": properties, "required": list(required), "additionalProperties": False}}
+        parameters = {"type": "object", "properties": properties, "additionalProperties": False}
+        if required:
+            parameters["required"] = list(required)
+        return {"type": "function", "name": name, "description": description, "parameters": parameters}
     return [
         fn("server_info", "Get useful information about the current Discord server.", {}),
         fn("member_info", "Get information about a server member by user ID.", {"user_id": {"type": "integer"}}, ["user_id"]),
